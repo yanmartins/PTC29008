@@ -15,7 +15,7 @@ A aplicação `coap_client.py`, permite realizar os métodos:__
 
 A seguir é exibido o formato do quadro de uma mensagem CoAP.
 
-![Mesage format](/home/yan/IFSC_git/PTC29008/P2-protocolo-de-aplicacao/imagens/message_format_coap.png)
+![Mesage format](https://github.com/yanmartins/PTC29008/blob/master/P2-protocolo-de-aplicacao/imagens/message_format_coap.png)
 
 A partir da tabela acima, temos que a quantidade de bits por campo é:
 
