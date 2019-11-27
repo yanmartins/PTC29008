@@ -1,7 +1,9 @@
 from random import randint, uniform
 from enum import Enum
+import poller
+import socket
 
-class Coap():
+class CoAP(poller.Callback):
     '''
     Classe que possui a implementação parcial do protocolo CoAP
     '''
@@ -68,12 +70,13 @@ class Coap():
         '''
         Estados da máquina de estados finita
         '''
-        inicio = 0
-        wait_conf = 1
-        ativo = 2
-        wait_ack = 3
+        idle = 0
+        wait_ack = 1
 
     def __init__(self):
+        '''
+        Cria um objeto do tipo CoAP
+        '''
         self.msg = bytearray()
 
         self.version = 1
@@ -88,6 +91,16 @@ class Coap():
         self.token = 0
         self.options = 0
 
+        self.servidor = ('', 5683)
+        self.caminho = ('', 0)
+        self.sock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        self.sock.bind(self.caminho)
+
+        self.upper = None
+        poller.Callback.__init__(self, self.sock, 0)
+        self.enable()
+
+        self.state = self.FSM.idle.value
         self.retries = 0
 
     def make_header(self, type, code, payload=None, uri=None, mid1=None, mid2=None):
@@ -121,8 +134,6 @@ class Coap():
 
         if not uri == None:
             self.msg.append(self.uri_path << 4 | (len(uri) << 0))
-
-
             self.msg = self.msg + uri
 
         if not payload == None:
@@ -163,6 +174,14 @@ class Coap():
         msg = self.make_header(type, self.Code.POST.value, payload=payload, uri=uri)
         return msg
 
+    def make_rst(self):
+        '''
+        Monta um cabeçalho do tipo RESET.
+        :return: cabeçalho pronto para ser enviado.
+        '''
+        msg = self.make_header(self.Type.RST.value, self.Code.EMPTY.value)
+        return msg
+
     def check_client_error(self, msg):
         '''
         Verifica se a mensagem contém código de Client Error.
@@ -170,6 +189,7 @@ class Coap():
         :return: resultado booleano.
         '''
         if (msg[1] >> 5) == 4:
+            print("CoAP: Erro no cliente!")
             return True
         else: return False
 
@@ -180,6 +200,7 @@ class Coap():
         :return: resultado booleano.
         '''
         if (msg[1] >> 5) == 5:
+            print("CoAP: Erro no servidor!")
             return True
         else: return False
 
@@ -225,13 +246,158 @@ class Coap():
         '''
         self.retries = 0
 
-    def get_mids(self, msg):
+    def check_mids(self, msg1, msg2):
         '''
-        Obtem os dois bytes correspondentes aos identificadores
-        de uma determinada mensagem. Útil para o ACK.
-        :param msg: mensagem cuja serão coletados os mids.
-        :return: mids coletados.
+        Verifica se duas mensagens possuem o mesmo MID
+        :param msg1: primeira mensagem
+        :param msg2: segunda mensagem
+        :return: resultado booleano.
         '''
-        mid1 = msg[2]
-        mid2 = msg[3]
-        return mid1, mid2
+        if (msg1[2] == msg2[2]) and (msg1[3] == msg2[3]):
+            return True
+        else:
+            return False
+
+    def check_token(self, msg1, msg2):
+        '''
+        Verifica se duas mensagens possuem o mesmo token
+        :param msg1: primeira mensagem
+        :param msg2: segunda mensagem
+        :return: resultado booleano.
+        '''
+        if (msg1[4] == msg2[4]):
+            return True
+        else:
+            return False
+
+    def get_payload(self, msg):
+        '''
+        Obtém o payload de uma mensagem.
+        :param msg: mensagem que terá seu payload extraído.
+        '''
+        return msg[6:]
+
+    def postar_msg(self, payload, uri=None):
+        '''
+        Envia um requisição POST.
+        :param payload: conteúdo da mensagem.
+        :param uri: caminho da uri.
+        '''
+        self.handle_fsm(payload, uri=uri, code=self.Code.POST.value)
+
+    def obter_msg(self, uri=None):
+        '''
+        Envia um requisição GET.
+        :param uri: caminho da uri.
+        '''
+        self.handle_fsm(uri=uri, code=self.Code.GET.value, msg=None)
+
+    def handle_fsm(self, msg, code=None, uri=None):
+        '''
+        Máquina de estados responsável por administrar o envio e recepção
+        de mensagens, garantido seu recebmento e detectando erros.
+        :param msg: payload ou mensagem recebida
+        :param uri: caminho da uri
+        :param code: código da mensagem
+        '''
+        if self.state == self.FSM.idle.value:
+            self._idle(msg, uri, code)
+        else:
+            self._wait_ack(msg)
+
+    def _idle(self, payload, uri, code):
+        '''
+        Estado inicial para envio de mensagens.
+        :param payload: conteúdo da mensagem
+        :param uri: caminho da uri
+        :param code: código da mensagem
+        '''
+        if (code == self.Code.POST.value):
+            msg = self.make_post(payload, uri)
+        else:
+            msg = self.make_get(uri)
+        self.state = self.FSM.wait_ack.value
+        self.recarrega_timeout(self.random_ack_timeout())
+        self.clean_retries()
+        self.send(msg)
+        print('CoAP: idle >> wait_ack')
+
+    def _wait_ack(self, msg):
+        '''
+        Aguarda a recepção de um ACK.
+        :param msg: mensagem recebida.
+        '''
+        if self.check_code(msg, self.Code.Valid.value) or self.check_code(msg, self.Code.Created.value) or \
+                self.check_code(msg, self.Code.Content.value) and self.check_mids(msg, self.msg) and \
+                self.check_token(msg, self.msg):
+            print('CoAP: wait_ack >> idle')
+            self.state = self.FSM.idle.value
+            self.disable_timeout()
+            self.send_up(self.get_payload(msg))
+
+        elif self.check_client_error(msg) or self.check_server_error(msg):
+            print('CoAP: wait_ack >> idle')
+            self.state = self.FSM.idle.value
+            self.erro()
+
+    def send(self, msg):
+        '''
+        Envia uma mensagem via sockets.
+        :param msg: mensagem a ser enviada.
+        '''
+        print('\tMsg Enviada: ', msg)
+        self.sock.sendto(msg, self.servidor)
+
+    def handle(self):
+        '''
+        Aguarda receber alguma mensagem via sockets, e então a envia
+        para a máquina de estados finita.
+        :return:
+        '''
+        msg_rcv, cliente = self.sock.recvfrom(4096)
+        print('\tMsg Recebida: ', msg_rcv)
+        self.handle_fsm(msg_rcv)
+
+    def handle_timeout(self):
+        '''
+        Monitora o timeout a fim de controlar os tempos de retransmissão das mensagens
+        '''
+        if self.state == self.FSM.wait_ack.value:
+            if self.check_retries():
+                self.send(self.retransmit())
+            else:
+                print('CoAP: LIMITE DE RETRANSMISSÕES ATINGIDO')
+                self.erro()
+
+    def recarrega_timeout(self, timeout):
+        '''
+        Carrega um novo valor de timeout e o recarrega
+        :param timeout: tempo de espera
+        '''
+        self.base_timeout = timeout
+        self.enable_timeout()
+        self.reload_timeout()
+
+    def erro(self):
+        '''
+        Notifica a camada superior que algum erro ocorreu.
+        :return:
+        '''
+        self.send(self.make_rst())
+        self.state = self.FSM.idle.value
+        self.upper.notifica_erro()
+
+    def send_up(self, msg):
+        '''
+        Notifica a camada superior do recebimento de alguma mensagem.
+        :param msg: mensagem recebida
+        '''
+        self.upper.notifica(msg)
+
+    def set_upper(self, upper):
+        '''
+        Define camada superior para qual serão enviadas
+        as notificações de novas mensagens e erros.
+        :param upper: objeto da camada superior
+        '''
+        self.upper = upper

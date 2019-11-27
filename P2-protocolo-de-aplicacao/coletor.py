@@ -1,6 +1,5 @@
-import socket
 import sensorapp_pb2
-from coap import Coap
+from coap import CoAP
 from random import randint
 import time
 import poller
@@ -21,27 +20,27 @@ class Coletor(poller.Callback):
         ativo = 2
         wait_ack = 3
 
-    def __init__(self, placa, l_sensor, periodo, uri):
+    def __init__(self, placa, l_sensor, periodo_ms, uri, coap):
         '''
-        Cria um objeto Coletor
+        Cria um objeto Coletor.
         :param placa: nome da placa
         :param l_sensor: lista de sensores
-        :param periodo: período de amostragem
+        :param periodo_ms: período de amostragem (ms)
         :param uri: caminho da uri em bytes
+        :param coap: objeto do tipo CoAP
         '''
-        self.coap = Coap()
+        self.coap = coap
+
         self.placa = placa
         self.l_sensor = l_sensor
-        self.periodo = periodo
+        self.periodo_ms = periodo_ms
+        self.periodo = periodo_ms/1000
         self.uri = uri
+        self.configuracao = bytearray()
 
         self.state = self.FSM.inicio.value
-        self.servidor = ('', 5683)
-        self.caminho = ('', 0)
-        self.sock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-        self.sock.bind(self.caminho)
 
-        poller.Callback.__init__(self, self.sock, 5)
+        poller.Callback.__init__(self, None, self.periodo)
         self.enable()
 
     def sensor_temperatura(self):
@@ -85,12 +84,12 @@ class Coletor(poller.Callback):
         amostras.append(msg_umi)
 
         dados = sensorapp_pb2.Mensagem()
-        dados.placa = 'placa_teste'
+        dados.placa = self.placa
         dados.dados.amostras.extend(amostras)
         payload = dados.SerializeToString()
 
-        coleta = self.coap.make_post(payload=payload, uri=self.uri)
-        self.handle_fsm(coleta)
+        #coleta = self.coap.make_post(payload=payload, uri=self.uri)
+        self.handle_fsm(payload)
 
     def config(self):
         '''
@@ -98,12 +97,11 @@ class Coletor(poller.Callback):
         '''
         msg = sensorapp_pb2.Mensagem()
         msg.placa = self.placa
-        msg.config.periodo = self.periodo
+        msg.config.periodo = self.periodo_ms
         msg.config.sensores.extend(self.l_sensor)
         payload = msg.SerializeToString()
-
-        configuracao = self.coap.make_post(payload=payload, uri=self.uri)
-        self.handle_fsm(configuracao)
+        self.handle_fsm(payload)
+        self.configuracao = payload
 
     def start(self):
         '''
@@ -131,89 +129,53 @@ class Coletor(poller.Callback):
         configuração.
         :param msg: mesangem de configuração
         '''
-        print('inicio >> wait_conf')
+        print('App: inicio >> wait_conf')
         self.state = self.FSM.wait_conf.value
-        self.coap.clean_retries()
-        self.recarrega_timeout(self.coap.random_ack_timeout())
-        self.send(msg)
+        self.coap.postar_msg(msg, self.uri)
 
     def _wait_conf(self, msg):
         '''
-        Aguarda a configuração ser aceita. (ACK 2.01 Created)
+        Aguarda a configuração ser aceita.
         :param msg: mensagem recebida.
         '''
-        if self.coap.check_code(msg, self.coap.Code.Created.value):
-            print('wait_conf >> ativo')
+        if msg == self.configuracao:
+            print('Configuração aceita!')
+            self.recarrega_timeout(self.periodo)
             self.state = self.FSM.ativo.value
-        elif self.coap.check_client_error(msg) or self.coap.check_server_error(msg):
-            print('wait_conf >> inicio')
+        else:
+            print('Configuração recusada!')
             self.state = self.FSM.inicio.value
+            self.disable_timeout()
+            self.start()
 
     def _ativo(self, msg):
         '''
         O sistema está ativo e enviará as amostras disponíveis.
         :param msg: amostras a serem enviadas.
         '''
-        print('ativo >> wait_ack')
+        print('App: ativo >> wait_ack')
         self.state = self.FSM.wait_ack.value
-        self.recarrega_timeout(self.coap.random_ack_timeout())
-        self.coap.clean_retries()
-        self.send(msg)
+        self.disable_timeout()
+        self.coap.postar_msg(msg, self.uri)
 
     def _wait_ack(self, msg):
         '''
-        Aguarda as amostras serem aceitas. (ACK 2.03 Valid)
+        Aguarda as amostras serem aceitas.
         :param msg: mensagem recebida.
         '''
-        if self.coap.check_code(msg, self.coap.Code.Valid.value):
-            print('wait_ack >> ativo')
+        if msg == b'' or msg == self.configuracao:
+            print('App: wait_ack >> ativo')
             self.state = self.FSM.ativo.value
             self.recarrega_timeout(self.periodo)
-        elif self.coap.check_client_error(msg) or self.coap.check_server_error(msg):
-            print('wait_ack >> inicio')
-            self.state = self.FSM.inicio.value
-
-    def send(self, msg):
-        '''
-        Envia uma mensagem.
-        :param msg: mensagem a ser enviada.
-        '''
-        print('Msg Enviada: ', msg)
-        self.sock.sendto(msg, self.servidor)
-
-    def handle(self):
-        '''
-        Aguarda receber alguma mensagem via sockets, e então a envia
-        para a máquina de estados finita.
-        :return:
-        '''
-        msg_rcv, cliente = self.sock.recvfrom(4096)
-        print('Msg Recebida: ', msg_rcv)
-        self.handle_fsm(msg_rcv)
 
     def handle_timeout(self):
         '''
-        Monitora o timeout a fim de controlar os tempos de transmissão das amostras
-        e reenviar mensagens quando necessário
+        Monitora o timeout a fim de controlar os tempos de transmissão das amostras.
         '''
         if self.state == self.FSM.ativo.value:
             self.coap.clean_retries()
             self.coleta_amostras()
-
-        elif self.state == self.FSM.wait_ack.value:
-            if self.coap.check_retries():
-                self.send(self.coap.retransmit())
-            else:
-                self.state = self.FSM.inicio.value
-
-        elif self.state == self.FSM.wait_conf.value:
-            if self.coap.check_retries():
-                self.send(self.coap.retransmit())
-            else:
-                self.state = self.FSM.inicio.value
-
-        else:
-            self.start()
+            self.disable_timeout()
 
     def recarrega_timeout(self, timeout):
         '''
@@ -224,16 +186,36 @@ class Coletor(poller.Callback):
         self.enable_timeout()
         self.reload_timeout()
 
+    def notifica(self, msg):
+        '''
+        Recebe a notificação da camada inferior
+        de que uma mensagem foi recebida.
+        '''
+        self.handle_fsm(msg)
+
+    def notifica_erro(self):
+        '''
+        Recebe a notificação da camada inferior
+        de que ocorreu um erro.
+        '''
+        self.state = self.FSM.inicio.value
+        self.disable_timeout()
+        self.start()
+
 if __name__ == "__main__":
 
     placa = 'placa_teste'
     l_sensor = ['luz', 'temperatura', 'umidade']
-    periodo = 5
+    periodo_ms = 5000
     uri = b'ptc'
 
-    c = Coletor(placa, l_sensor, periodo, uri)
-    c.start()
+    coap = CoAP()
+    coletor = Coletor(placa, l_sensor, periodo_ms, uri, coap)
+
+    coap.set_upper(coletor)
+    coletor.start()
 
     sched = poller.Poller()
-    sched.adiciona(c)
+    sched.adiciona(coletor)
+    sched.adiciona(coap)
     sched.despache()
