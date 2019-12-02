@@ -211,7 +211,7 @@ if __name__ == "__main__":
 
     coap = CoAP()
     coletor = Coletor(placa, l_sensor, periodo_ms, uri, coap)
-
+    coap.obter_msg(uri)
     coap.set_upper(coletor)
     coletor.start()
 

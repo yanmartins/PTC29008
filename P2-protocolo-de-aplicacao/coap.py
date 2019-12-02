@@ -182,6 +182,18 @@ class CoAP(poller.Callback):
         msg = self.make_header(self.Type.RST.value, self.Code.EMPTY.value)
         return msg
 
+    def is_ack(self, msg):
+        '''
+        Verica se o tipo da mensagem é ACK
+        :param msg: mensagem a ser verificada.
+        :return: resultado booleand.
+        '''
+        tipo = msg[0] >> 4 & 0b0011     # Extrai o campo Type
+        if tipo == self.Type.ACK.value:
+            return True
+        else:
+            return False
+
     def check_client_error(self, msg):
         '''
         Verifica se a mensagem contém código de Client Error.
@@ -329,7 +341,7 @@ class CoAP(poller.Callback):
         '''
         if self.check_code(msg, self.Code.Valid.value) or self.check_code(msg, self.Code.Created.value) or \
                 self.check_code(msg, self.Code.Content.value) and self.check_mids(msg, self.msg) and \
-                self.check_token(msg, self.msg):
+                self.check_token(msg, self.msg) and self.is_ack(msg):
             print('CoAP: wait_ack >> idle')
             self.state = self.FSM.idle.value
             self.disable_timeout()
