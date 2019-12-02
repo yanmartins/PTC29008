@@ -1,0 +1,13 @@
+Verificação de Protocolos
+Modelagem de uma máquina de estados
+
+- simulação
+- analítica (ex.: CSP)
+- model checking
+
+
+Autenticação wiki de PTC
+aluno
+ptc20152
+
+Promela: linguagem de descrição de sistemas
