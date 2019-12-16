@@ -9,8 +9,7 @@ Segundo projeto da disciplina de Projeto de Protocolos (PTC29008) do curso de En
 
 #### Aplicação de demosntração
 
-A aplicação foi desenvolvida em **Python 3**, a qual simula a coleta de amostras de diferentes sensores, e os envia para
-o servidor no formato do protocolo **CoAP**, com o campo payload seguindo os padrões do **Protocol Buffers**.
+A aplicação foi desenvolvida em **Python 3**, a qual simula a coleta de amostras de diferentes sensores, e os envia para o servidor no formato do protocolo **CoAP**, com o campo payload seguindo os padrões do **Protocol Buffers**.
 
 #### Instruções para execução
 
