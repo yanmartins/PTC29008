@@ -12,3 +12,18 @@ Serão verificadas as seguintes FSM do protocolo desenvolvido no projeto 1:
 - **Sessão conexão:** duas entidades são capazes de estabelecerem uma sessão, independente de qual delas iniciar a sessão
 - **ARQ:** eventualmente, transmissor de um quadro sabe se sua entrega teve sucesso
 - **Enquadramento:** Perdas de sincronismo no enquadramento são recuperadas em algum momento futuro
+
+## Geração do verificador
+
+A geração do verificador deve ser feita com os comandos a seguir:
+
+```
+spin -a modelo.pml
+gcc -o pan pan.c
+```
+
+Por fim, deve-se executá-lo desta form:
+
+```
+./pan -a
+```

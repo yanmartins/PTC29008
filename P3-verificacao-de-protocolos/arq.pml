@@ -14,7 +14,13 @@ active proctype tx() {
     estado0:
       c1!data,seq
       retries = 0
-
+      /*
+      int boff = 0
+      do
+      :: c1!data,seq
+         retries = 0
+      :: boff < 7 -> boff++
+      */
     estado1:
       do
       :: c2?ack -> // simula erro, que causa, fatalmente, um timeout
@@ -50,6 +56,8 @@ active proctype rx() {
 
     // Este comportamento é o mesmo para os quatro estados da FSM.
     do
+    :: c1?data -> // Simula erro, perda de msg
+       skip
     :: c1?data,eval(seq) -> 
         printf("RX: recebeu data = %d (correto)\n", seq)
         c2!ack,seq

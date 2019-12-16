@@ -1,3 +1,10 @@
+/*
+   SESSÃO DESCONEXÃO
+   Verificação do modelo para duas entidades alcancem, 
+   onde o término de sessão eventualmente será concluído 
+   para ambas as partes.
+*/
+
 // Os tipos de mensagens
 mtype = {data, dr, dc, kr};
 /*
@@ -10,10 +17,12 @@ mtype = {data, dr, dc, kr};
 // Mensagens que serão transmitidas pelos canais
 chan    c1 = [1] of {mtype};
 chan    c2 = [1] of {mtype};
- 
+
+// Entidades iniciam conectadas.
+bool desconectado1 = false
+bool desconectado2 = false
+
 active proctype entidade1() {
-    // Estado da entidade, defautl: true (conectado)
-    bool estado = true
     conectado:
         do
         :: c1!dr ->   // tomou a iniciativa da desconexão
@@ -27,7 +36,7 @@ active proctype entidade1() {
 
     half1:
         do
-        //:: c2?data -> printf("Mensagem")
+        :: c2?data -> printf("Mensagem")
         :: c2?kr -> c1!dr
         :: c2?dr -> c1!dc
            goto desconectado
@@ -42,13 +51,11 @@ active proctype entidade1() {
         od
 
     desconectado:
-        estado = false
+        desconectado1 = true
         printf("Entidade %d se desconectou\n", _pid)
 }
 
 active proctype entidade2() {
-    // Estado da entidade, defautl: true (conectado)
-    bool estado = true
     conectado:
         do
         :: c1!dr ->   // tomou a iniciativa da desconexão
@@ -58,7 +65,6 @@ active proctype entidade2() {
         :: c1?dr -> c2!dr   // recebeu solicitação de desconexão
            printf("Solicitação %d\n", _pid)
            goto half2
-
         od
 
     half1:
@@ -78,9 +84,9 @@ active proctype entidade2() {
         od
 
     desconectado:
-        estado = false
         printf("Entidade %d se desconectou\n", _pid)
+        desconectado2 = true
 }
 
 // A partir de algum momento, ambas entidades permanecerão sempre desconectadas.
-ltl desc { <>[] !(entidade1@desconectado && entidade2@desconectado) }
+ltl desc { <>[](desconectado1 && desconectado2) }
